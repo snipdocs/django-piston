@@ -10,7 +10,7 @@ from django.db.models.query import QuerySet
 from django.http import Http404
 
 from emitters import Emitter
-from handler import typemapper
+from handler import typemapper, AnonymousBaseHandler, BaseHandler
 from doc import HandlerMethod
 from authentication import NoAuthentication
 from utils import coerce_put_post, FormValidationError, HttpStatusCode
@@ -67,7 +67,7 @@ class Resource(object):
 
     def form_validation_response(self, e):
         """
-        Method to return form validation error information. 
+        Method to return form validation error information.
         You will probably want to override this in your own
         `Resource` subclass.
         """
@@ -179,15 +179,15 @@ class Resource(object):
         status_code = 200
 
         # If we're looking at a response object which contains non-string
-        # content, then assume we should use the emitter to format that 
+        # content, then assume we should use the emitter to format that
         # content
         if isinstance(result, HttpResponse) and not result._is_string:
             status_code = result.status_code
             # Note: We can't use result.content here because that method attempts
-            # to convert the content into a string which we don't want. 
+            # to convert the content into a string which we don't want.
             # when _is_string is False _container is the raw data
             result = result._container
-     
+
         srl = emitter(result, typemapper, handler, fields, anonymous)
 
         try:
@@ -247,7 +247,7 @@ class Resource(object):
 
     def error_handler(self, e, request, meth, em_format):
         """
-        Override this method to add handling of errors customized for your 
+        Override this method to add handling of errors customized for your
         needs
         """
         if isinstance(e, FormValidationError):
@@ -275,8 +275,8 @@ class Resource(object):
 
         elif isinstance(e, HttpStatusCode):
             return e.response
- 
-        else: 
+
+        else:
             """
             On errors (like code errors), we'd like to be able to
             give crash reports to both admins and also the calling
@@ -300,3 +300,43 @@ class Resource(object):
                     format_error('\n'.join(rep.format_exception())))
             else:
                 raise
+class CORSResource(Resource):
+    """
+    Piston Resource to enable CORS.
+    """
+
+    # headers sent in all responses
+    cors_headers = [
+        ('Access-Control-Allow-Origin',     '*'),
+        ('Access-Control-Allow-Headers',    'Authorization'),
+    ]
+
+    # headers sent in pre-flight responses
+    preflight_headers = cors_headers + [
+        ('Access-Control-Allow-Methods',    'GET'),
+        ('Access-Control-Allow-Credentials','true')
+    ]
+
+    def __call__(self, request, *args, **kwargs):
+
+        request_method = request.method.upper()
+
+        # intercept OPTIONS method requests
+        if request_method == "OPTIONS":
+            # preflight requests don't need a body, just headers
+            resp = HttpResponse()
+
+            # add headers to the empty response
+            for hk, hv in self.preflight_headers:
+                resp[hk] = hv
+
+        else:
+            # otherwise, behave as if we called  the base Resource
+            resp = super(CORSResource, self).__call__(request, *args, **kwargs)
+
+            # slip in the headers after we get the response
+            # from the handler
+            for hk, hv in self.cors_headers:
+                resp[hk] = hv
+
+        return resp
